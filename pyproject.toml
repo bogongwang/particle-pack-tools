@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "particle-pack-tools"
+version = "0.0.1"
+authors = [
+    { name = "Bogong Wang", email = "bogongwang.dev@outlook.com" }
+]
+description = "A toolkit for processing and visualizing particle pack data."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["particle pack", "tools", "visualization", "data processing", "particle pack"]
+
+dependencies = [
+    "xarray>=2025.1",
+    "dask>=2025.1",
+    "scikit-image>=0.25.0",
+    "numpy>=1.25.0",
+    "numba>=0.60.0",
+    "matplotlib>=3.10.0"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+test = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/bogongwang/particle-pack-tools"
+Repository = "https://github.com/bogongwang/particle-pack-tools"
