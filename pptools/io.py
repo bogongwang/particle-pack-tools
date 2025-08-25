@@ -1,5 +1,5 @@
 import xarray as xr
-import dask
+import dask.array as da
 
 def load_nc(path: str) -> xr.Dataset:
     """
@@ -43,7 +43,7 @@ def load_nc(path: str) -> xr.Dataset:
         except Exception as e_labels:
             raise RuntimeError(f"Failed to load netCDF files as tomogram (error: {e_tomo}) and as labels (error: {e_labels}). Please check the file(s) and dimension names.")
 
-def load_nc_arr(path: str) -> dask.array.core.Array:
+def load_nc_arr(path: str) -> da.Array:
     """
     Load one or more netCDF files and return the data array for the tomogram or label variable as a Dask array.
 
