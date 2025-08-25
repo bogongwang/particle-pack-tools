@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "particle-pack-tools"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
     { name = "Bogong Wang", email = "bogongwang.dev@outlook.com" }
 ]
@@ -22,7 +22,9 @@ keywords = ["particle pack", "tools", "visualization", "data processing", "parti
 dependencies = [
     "xarray>=2025.1",
     "dask>=2025.1",
+    "netCDF4>=1.7.2",
     "scikit-image>=0.25.0",
+    "scipy>=1.15.0",
     "numpy>=1.25.0",
     "numba>=0.60.0",
     "matplotlib>=3.10.0"
