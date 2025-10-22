@@ -171,7 +171,7 @@ class MaskWriter:
             if overwrite:
                 self.close()
                 os.remove(self.path)
-                print(f"Overwriting existing nc file at {self.path}!")
+                print(f"Existing nc file at {self.path} was overwritten.")
             else:
                 raise FileExistsError(f"File {self.path} already exists (overwrite is disabled).")
         ds = Dataset(self.path, 'w')
@@ -210,7 +210,33 @@ class MaskWriter:
         self._labels_arr[idx] = data
         # Flush on request or on last slice
         if sync or (idx == self._shape[0] - 1):
-            self._dataset.sync()
+            self.sync()
+    
+    def replace(self, idx: int, src: int, dst: int):
+        """
+        Replace all occurrences of a label value within a 2D slice of the dataset.
+
+        Args:
+            idx (int): Index along the z-dimension specifying which slice to modify.
+            src (int): Source label value to be replaced.
+            dst (int): Destination label value to replace the source with.
+
+        Behaviour:
+            Scans the specified z-slice in the NetCDF variable 'labels' and replaces
+            all pixels with value `src` by `dst`. The modification is performed in-place.
+        """
+        self._labels_arr[idx] = xr.where(self._labels_arr[idx] == src, dst, self._labels_arr[idx])
+    
+    def sync(self):
+        """
+        Flush any pending changes in the dataset to disk.
+
+        Behaviour:
+            Ensures that all modifications made to the NetCDF variable 'labels'
+            are written to disk, keeping the on-disk data consistent with memory.
+            Useful after multiple write or correct operations.
+        """
+        self._dataset.sync()
 
     def close(self):
         """
