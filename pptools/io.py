@@ -212,6 +212,36 @@ class MaskWriter:
         if sync or (idx == self._shape[0] - 1):
             self.sync()
     
+    def write_block(
+        self, 
+        data: np.ndarray, 
+        offset: Tuple[int] = (0, 0, 0), 
+        sync: bool = True
+    ):
+        """
+        Write a 3D data block into the label dataset starting at the specified index.
+
+        Args:
+            start_idx (tuple): A tuple of (z_start, y_start, x_start) specifying where to write the data block.
+            data (np.ndarray): 3D numpy array of shape (z, y, x) to write into the dataset.
+            sync (bool, optional): If True (default), flush changes to disk immediately after writing.
+
+        Behaviour:
+            Overwrites a sub-volume in the NetCDF variable 'labels' with the provided data block.
+        """
+        z_start, y_start, x_start = offset
+        z_end = z_start + data.shape[0]
+        y_end = y_start + data.shape[1]
+        x_end = x_start + data.shape[2]
+        data_mask = data > 0
+        if np.any(data_mask):
+            write_target = self._labels_arr[z_start:z_end, y_start:y_end, x_start:x_end]
+            # netCDF4 returns a copy for slices, so mutate then assign back explicitly
+            write_target[data_mask] = data[data_mask]
+            self._labels_arr[z_start:z_end, y_start:y_end, x_start:x_end] = write_target
+        if sync:
+            self.sync()
+    
     def replace(self, idx: int, src: int, dst: int):
         """
         Replace all occurrences of a label value within a 2D slice of the dataset.
