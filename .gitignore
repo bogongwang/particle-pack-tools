@@ -18,6 +18,7 @@ venv/
 # System files
 Thumbs.db
 *.DS_Store
+.vscode/
 
 # Debugging files
 debug*.*

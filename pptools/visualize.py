@@ -41,6 +41,8 @@ class Visualizer:
             mpl.rcParams.update(mpl.rcParamsDefault)
         self.tomo_cmap = 'gray'
         self.mask_cmap = Visualizer.create_mask_cmap(n_colors, cmap=cmap, seed=seed)
+        # Set the color for invalid values (e.g., NaN) to black
+        self.mask_cmap.set_bad(color='black') 
         self.mask_cmap_norm = mcolors.Normalize(vmin=0, vmax=n_colors)
         self.sliders = []
 
