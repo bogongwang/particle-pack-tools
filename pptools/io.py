@@ -1,5 +1,6 @@
 import os
 from typing import Tuple, Optional
+from pathlib import Path
 
 import numpy as np
 import xarray as xr
@@ -148,7 +149,7 @@ class NCWriter:
         self,
         shape: Tuple[int, int, int],
         dtype: type = np.int32,
-        fill_value: int = -1,
+        fill_value: int = 0,
         varname: str = "labels",
         attrs: dict = None,
         complevel: int = 2,
@@ -160,7 +161,7 @@ class NCWriter:
         Args:
             shape (tuple): A tuple of (z, y, x) specifying the dimensions of the label volume.
             dtype (type, optional): Data type for the NetCDF variable (default: np.int32).
-            fill_value (int, optional): Fill value for uninitialized data (default: -1). Remember to change this if using unsigned types!
+            fill_value (int, optional): Fill value for uninitialized data (default: 0). Remember to change this if using unsigned types!
             attrs (dict, optional): Attributes to store in the NetCDF file's global attributes.
             complevel (int, optional): Compression level for zlib compression (default: 2).
             overwrite (bool, optional): If True, overwrite an existing file at the path; otherwise, raises an error if file exists.
@@ -179,6 +180,7 @@ class NCWriter:
                 raise FileExistsError(f"File {self.path} already exists (overwrite is disabled).")
         self._varname = varname
         dimensions = (f'{self._varname}_zdim', f'{self._varname}_ydim', f'{self._varname}_xdim')
+        Path(self.path).parent.mkdir(exist_ok=True)
         ds = Dataset(self.path, 'w')
         ds.createDimension(dimensions[0], shape[0])
         ds.createDimension(dimensions[1], shape[1])
