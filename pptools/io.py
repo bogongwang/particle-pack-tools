@@ -6,6 +6,103 @@ import numpy as np
 import xarray as xr
 import dask.array as da
 from netCDF4 import Dataset
+import zarr
+from zarr.codecs import BloscCodec
+
+
+class ZarrWriter:
+    """
+    A writer class for creating and writing data to Zarr arrays with Blosc compression.
+    """
+    def __init__(
+        self, 
+        path, 
+        shape, 
+        dtype, 
+        chunks=(128, 128, 128), 
+        comp_level=0, 
+        fill_value=0, 
+        overwrite=False, 
+        attributes=None
+    ):
+        """
+        Initialize a ZarrWriter instance.
+
+        Args:
+            path (str): Path to the Zarr store.
+            shape (tuple): Shape of the dataset.
+            dtype (str or np.dtype): Data type of the array.
+            chunks (tuple, optional): Chunk shape. Defaults to (128, 128, 128).
+            comp_level (int, optional): Compression level for Zstandard compressor. Defaults to 0.
+            fill_value (numeric, optional): Fill value for uninitialized regions. Defaults to 0.
+            overwrite (bool, optional): Whether to overwrite if the path exists. Defaults to False.
+            attributes (dict, optional): User-defined attributes to store. Defaults to None.
+        """
+        self.zarr = zarr.create_array(
+            store=path,
+            shape=shape,
+            dtype=dtype,
+            chunks=chunks,
+            compressors=[BloscCodec(
+                cname="zstd",
+                clevel=comp_level,
+            )],
+            fill_value=fill_value,
+            overwrite=overwrite,
+            attributes=attributes
+        )
+    
+    def write(
+        self,
+        data: np.ndarray,
+        offset: tuple[int, int, int] = (0, 0, 0),
+        write_whitespce: bool = False,
+    ):
+        """
+        Write a block of data into the Zarr array at a specified offset.
+
+        Args:
+            data (np.ndarray): The data block to write.
+            offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
+            write_whitespce (bool, optional): If True, writes all values in the block. If False, only writes non-zero values. Defaults to False.
+        """
+        z_start, y_start, x_start = offset
+        z_end = z_start + data.shape[0]
+        y_end = y_start + data.shape[1]
+        x_end = x_start + data.shape[2]
+        if write_whitespce:
+            self.zarr[z_start:z_end, y_start:y_end, x_start:x_end] = data
+        else:
+            data_mask = data > 0
+            if np.any(data_mask):
+                self.zarr[z_start:z_end, y_start:y_end, x_start:x_end][data_mask] = data[data_mask]
+
+
+class ZarrReader:
+    """
+    A reader class for lazily loading Zarr arrays using Dask.
+    """
+    def __init__(self, path, persist_threshold=2e9):
+        """
+        Initialize a ZarrReader instance.
+
+        Args:
+            path (str): Path to the Zarr store.
+            persist_threshold (float, optional): Maximum size in bytes below which data is loaded into memory (persisted). Defaults to 2e9 (2 GB).
+        """
+        self.data = da.from_zarr(path)
+        if self.data.nbytes < persist_threshold:
+            self.data = self.data.persist()
+
+    def to_numpy(self):
+        """
+        Compute and return the loaded data as a NumPy array.
+
+        Returns:
+            np.ndarray: The complete data array in memory.
+        """
+        return self.data.compute()
+
 
 def load_nc(
         path: str, 
