@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
+import dask
 import dask.array as da
 from netCDF4 import Dataset
 import zarr
@@ -38,6 +39,7 @@ class ZarrWriter:
             overwrite (bool, optional): Whether to overwrite if the path exists. Defaults to False.
             attributes (dict, optional): User-defined attributes to store. Defaults to None.
         """
+        self.path = path
         self.zarr = zarr.create_array(
             store=path,
             shape=shape,
@@ -56,7 +58,8 @@ class ZarrWriter:
         self,
         data: np.ndarray,
         offset: tuple[int, int, int] = (0, 0, 0),
-        write_whitespce: bool = False,
+        write_non_positive_vals: bool = True,
+        backend: str = "zarr",
     ):
         """
         Write a block of data into the Zarr array at a specified offset.
@@ -64,35 +67,140 @@ class ZarrWriter:
         Args:
             data (np.ndarray): The data block to write.
             offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
-            write_whitespce (bool, optional): If True, writes all values in the block. If False, only writes non-zero values. Defaults to False.
+            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
+            backend (str, optional): The backend to use for writing. Defaults to "zarr".
+        """
+        if backend == "zarr":
+            self._zarr_write(data, offset, write_non_positive_vals)
+        elif backend == "dask":
+            self._dask_write(data, offset, write_non_positive_vals)
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
+   
+    def _zarr_write(
+        self,
+        data: np.ndarray,
+        offset: tuple[int, int, int] = (0, 0, 0),
+        write_non_positive_vals: bool = True,
+    ):
+        """
+        Write a block of data into the Zarr array at a specified offset.
+
+        Args:
+            data (np.ndarray): The data block to write.
+            offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
+            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
         """
         z_start, y_start, x_start = offset
         z_end = z_start + data.shape[0]
         y_end = y_start + data.shape[1]
         x_end = x_start + data.shape[2]
-        if write_whitespce:
+        if write_non_positive_vals:
+            data = data.astype(self.zarr.dtype)
             self.zarr[z_start:z_end, y_start:y_end, x_start:x_end] = data
         else:
             data_mask = data > 0
             if np.any(data_mask):
-                self.zarr[z_start:z_end, y_start:y_end, x_start:x_end][data_mask] = data[data_mask]
+                data = data.astype(self.zarr.dtype, copy=False)
+
+                sl = np.s_[z_start:z_end, y_start:y_end, x_start:x_end]
+                region = self.zarr[sl]
+                region = np.where(data_mask, data, region)
+                self.zarr[sl] = region
+    
+    def _dask_write(
+        self,
+        data: np.ndarray,
+        offset: tuple[int, int, int] = (0, 0, 0),
+        write_non_positive_vals: bool = True,
+    ):
+        """
+        Write a block of data into the Zarr array at a specified offset using Dask for parallelism.
+
+        Args:
+            data (np.ndarray): The data block to write.
+            offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
+            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
+        """
+        if not isinstance(data, da.Array):
+            data = da.from_array(data, chunks=self.zarr.chunks)
+        else:
+            data = data.rechunk(self.zarr.chunks)
+        z_start, y_start, x_start = offset
+        z_end = z_start + data.shape[0]
+        y_end = y_start + data.shape[1]
+        x_end = x_start + data.shape[2]
+        saved_data = data
+        if not write_non_positive_vals:
+            target_region = da.from_array(
+                self.zarr[z_start:z_end, y_start:y_end, x_start:x_end],
+                chunks=self.zarr.chunks,
+            )
+            saved_data = da.where(data > 0, data, target_region)
+        
+        saved_data = saved_data.astype(self.zarr.dtype)
+        saved_data = saved_data.rechunk(self.zarr.chunks)
+        saved_data.to_zarr(
+            self.zarr,
+            region=(slice(z_start, z_end), slice(y_start, y_end), slice(x_start, x_end)),
+            compute=True,
+        )
 
 
 class ZarrReader:
     """
     A reader class for lazily loading Zarr arrays using Dask.
     """
-    def __init__(self, path, persist_threshold=2e9):
+    def __init__(self, path, mode="r", persist_threshold=2e9):
         """
         Initialize a ZarrReader instance.
 
         Args:
             path (str): Path to the Zarr store.
+            mode (str, optional): The mode to open the Zarr store. Defaults to "r".
             persist_threshold (float, optional): Maximum size in bytes below which data is loaded into memory (persisted). Defaults to 2e9 (2 GB).
         """
-        self.data = da.from_zarr(path)
-        if self.data.nbytes < persist_threshold:
-            self.data = self.data.persist()
+        self.zarr_array = zarr.open_array(path, mode=mode)
+        self.dask_array = da.from_zarr(path)
+        if self.dask_array.nbytes < persist_threshold:
+            self.dask_array = self.dask_array.persist()
+    
+    def get_zarr(self) -> zarr.Array:
+        """
+        Get the underlying Zarr array.
+
+        Returns:
+            zarr.core.Array: The Zarr array object.
+        """
+        return self.zarr_array
+    
+    def get_writable(self) -> zarr.Array:
+        """
+        Get a writable reference to the Zarr array. (Alias to get_zarr)
+
+        Returns:
+            zarr.core.Array: The Zarr array object opened in write mode.
+        """
+        return self.zarr_array
+    
+    def get_dask_array(self) -> da.Array:
+        """
+        Get the Dask array representation of the Zarr data.
+
+        Returns:
+            dask.array.Array: The Dask array for lazy loading and computation.
+        """
+        return self.dask_array
+    
+    def get_readable(self) -> da.Array:
+        """
+        Get a readable reference to the Dask array.
+
+        Returns:
+            dask.array.Array: The Dask array for lazy loading and computation.
+        """
+        return self.dask_array
+    
 
     def to_numpy(self):
         """
@@ -101,7 +209,7 @@ class ZarrReader:
         Returns:
             np.ndarray: The complete data array in memory.
         """
-        return self.data.compute()
+        return self.zarr_array.compute()
 
 
 def load_nc(
