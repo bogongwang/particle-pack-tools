@@ -21,6 +21,7 @@ class ZarrWriter:
         shape, 
         dtype, 
         chunks=(128, 128, 128), 
+        shards=(512, 512, 512),
         comp_level=0, 
         fill_value=0, 
         overwrite=False, 
@@ -40,11 +41,12 @@ class ZarrWriter:
             attributes (dict, optional): User-defined attributes to store. Defaults to None.
         """
         self.path = path
-        self.zarr = zarr.create_array(
+        self.zarr_array = zarr.create_array(
             store=path,
             shape=shape,
             dtype=dtype,
             chunks=chunks,
+            shards=shards,
             compressors=[BloscCodec(
                 cname="zstd",
                 clevel=comp_level,
@@ -53,35 +55,44 @@ class ZarrWriter:
             overwrite=overwrite,
             attributes=attributes
         )
+        self.shard_size = np.prod(self.zarr_array.shards) * self.zarr_array.dtype.itemsize
     
     def write(
         self,
-        data: np.ndarray,
+        data: np.ndarray | da.Array,
         offset: tuple[int, int, int] = (0, 0, 0),
-        write_non_positive_vals: bool = True,
-        backend: str = "zarr",
+        write_positive_regions_only: bool = False,
+        backend: str | None = None,
     ):
         """
         Write a block of data into the Zarr array at a specified offset.
 
         Args:
-            data (np.ndarray): The data block to write.
+            data (np.ndarray | da.Array): The data block to write.
             offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
-            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
+            write_positive_regions_only (bool, optional): If True, only writes positive values. If False, writes all values. Defaults to False.
             backend (str, optional): The backend to use for writing. Defaults to "zarr".
         """
+        if backend is None:
+            if isinstance(data, da.Array):
+                backend = "dask"
+            elif isinstance(data, np.ndarray):
+                backend = "zarr"
+            else:
+                raise TypeError("Unsupported data type. Please provide a NumPy array or a Dask array.")
+
         if backend == "zarr":
-            self._zarr_write(data, offset, write_non_positive_vals)
+            self._zarr_write(data, offset, write_positive_regions_only)
         elif backend == "dask":
-            self._dask_write(data, offset, write_non_positive_vals)
+            self._dask_write(data, offset, write_positive_regions_only)
         else:
             raise ValueError(f"Unsupported backend: {backend}")
    
     def _zarr_write(
         self,
         data: np.ndarray,
-        offset: tuple[int, int, int] = (0, 0, 0),
-        write_non_positive_vals: bool = True,
+        offset: tuple[int, int, int],
+        write_positive_regions_only: bool,
     ):
         """
         Write a block of data into the Zarr array at a specified offset.
@@ -89,62 +100,65 @@ class ZarrWriter:
         Args:
             data (np.ndarray): The data block to write.
             offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
-            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
+            write_positive_regions_only (bool, optional): If True, only writes positive values. If False, writes all values. Defaults to False.
         """
         z_start, y_start, x_start = offset
         z_end = z_start + data.shape[0]
         y_end = y_start + data.shape[1]
         x_end = x_start + data.shape[2]
-        if write_non_positive_vals:
-            data = data.astype(self.zarr.dtype)
-            self.zarr[z_start:z_end, y_start:y_end, x_start:x_end] = data
+        sl = np.s_[z_start:z_end, y_start:y_end, x_start:x_end]
+        # Write entire region
+        if not write_positive_regions_only:
+            data = data.astype(self.zarr_array.dtype)
+            self.zarr_array[sl] = data
         else:
             data_mask = data > 0
             if np.any(data_mask):
-                data = data.astype(self.zarr.dtype, copy=False)
-
-                sl = np.s_[z_start:z_end, y_start:y_end, x_start:x_end]
-                region = self.zarr[sl]
+                data = data.astype(self.zarr_array.dtype, copy=False)
+                region = self.zarr_array[sl]
                 region = np.where(data_mask, data, region)
-                self.zarr[sl] = region
+                self.zarr_array[sl] = region
     
     def _dask_write(
         self,
-        data: np.ndarray,
+        data: np.ndarray | da.Array,
         offset: tuple[int, int, int] = (0, 0, 0),
-        write_non_positive_vals: bool = True,
+        write_positive_regions_only: bool = False,
     ):
         """
         Write a block of data into the Zarr array at a specified offset using Dask for parallelism.
 
         Args:
-            data (np.ndarray): The data block to write.
+            data (np.ndarray | da.Array): The data block to write.
             offset (tuple, optional): The (z, y, x) starting index for the write. Defaults to (0, 0, 0).
-            write_non_positive_vals (bool, optional): If True, writes all values in the block. If False, only writes positive values. Defaults to False.
+            write_positive_regions_only (bool, optional): If True, only writes positive values. If False, writes all values. Defaults to False.
         """
-        if not isinstance(data, da.Array):
-            data = da.from_array(data, chunks=self.zarr.chunks)
+        if isinstance(data, np.ndarray):
+            data = da.from_array(data, chunks=self.zarr_array.shards)
+        elif isinstance(data, da.Array):
+            data = data.rechunk(self.zarr_array.shards)
         else:
-            data = data.rechunk(self.zarr.chunks)
+            raise TypeError("Unsupported data type. Please provide a NumPy array or a Dask array.")
+
         z_start, y_start, x_start = offset
         z_end = z_start + data.shape[0]
         y_end = y_start + data.shape[1]
         x_end = x_start + data.shape[2]
         saved_data = data
-        if not write_non_positive_vals:
+
+        if write_positive_regions_only:
             target_region = da.from_array(
-                self.zarr[z_start:z_end, y_start:y_end, x_start:x_end],
-                chunks=self.zarr.chunks,
+                self.zarr_array[z_start:z_end, y_start:y_end, x_start:x_end],
+                chunks=self.zarr_array.shards,
             )
             saved_data = da.where(data > 0, data, target_region)
         
-        saved_data = saved_data.astype(self.zarr.dtype)
-        saved_data = saved_data.rechunk(self.zarr.chunks)
-        saved_data.to_zarr(
-            self.zarr,
-            region=(slice(z_start, z_end), slice(y_start, y_end), slice(x_start, x_end)),
-            compute=True,
-        )
+        with dask.config.set({"array.chunk-size": self.shard_size}):
+            saved_data.to_zarr(
+                self.zarr_array,
+                region=(slice(z_start, z_end), slice(y_start, y_end), slice(x_start, x_end)),
+                compute=True,
+            )
 
 
 class ZarrReader:
@@ -161,7 +175,7 @@ class ZarrReader:
             persist_threshold (float, optional): Maximum size in bytes below which data is loaded into memory (persisted). Defaults to 2e9 (2 GB).
         """
         self.zarr_array = zarr.open_array(path, mode=mode)
-        self.dask_array = da.from_zarr(path)
+        self.dask_array = da.from_zarr(self.zarr_array)
         if self.dask_array.nbytes < persist_threshold:
             self.dask_array = self.dask_array.persist()
     
