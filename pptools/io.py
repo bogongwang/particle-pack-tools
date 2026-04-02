@@ -195,7 +195,9 @@ class ZarrReader:
         Returns:
             zarr.core.Array: The Zarr array object opened in write mode.
         """
-        return self.zarr_array
+        if self.zarr_array.mode == 'r':
+            raise PermissionError("Zarr array is opened in read-only mode. Cannot get writable reference.")
+        return self.get_zarr()
     
     def get_dask_array(self) -> da.Array:
         """
@@ -213,7 +215,7 @@ class ZarrReader:
         Returns:
             dask.array.Array: The Dask array for lazy loading and computation.
         """
-        return self.dask_array
+        return self.get_dask_array()
     
 
     def to_numpy(self):
