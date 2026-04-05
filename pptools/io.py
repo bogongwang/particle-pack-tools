@@ -174,6 +174,7 @@ class ZarrReader:
             mode (str, optional): The mode to open the Zarr store. Defaults to "r".
             persist_threshold (float, optional): Maximum size in bytes below which data is loaded into memory (persisted). Defaults to 2e9 (2 GB).
         """
+        self.mode = mode
         self.zarr_array = zarr.open_array(path, mode=mode)
         self.dask_array = da.from_zarr(self.zarr_array)
         if self.dask_array.nbytes < persist_threshold:
@@ -195,7 +196,7 @@ class ZarrReader:
         Returns:
             zarr.core.Array: The Zarr array object opened in write mode.
         """
-        if self.zarr_array.mode == 'r':
+        if self.mode == 'r':
             raise PermissionError("Zarr array is opened in read-only mode. Cannot get writable reference.")
         return self.get_zarr()
     
